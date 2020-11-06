@@ -1,0 +1,1 @@
+cl /DEBUG:FULL /Z7 /EHsc main.cpp jsp.cpp
