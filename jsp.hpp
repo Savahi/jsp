@@ -8,9 +8,12 @@
 class JspType {
     public:
         static const int UNDEF = 0;
+        static const int EMPTYARR = 1;
         static const int DICT = 10;
         static const int STR = 20;
         static const int NUM = 21;
+        static const int BOOL = 22;
+        static const int NULLVAL = 23;
         static const int DICTARR = 30;
         static const int STRARR = 31;
         static const int NUMARR = 32;
@@ -31,6 +34,7 @@ class JspPair {
 
         double num_value;
         std::string str_value;
+        bool bool_value;
         int childContainer;
 
         std::vector<double> num_values;
@@ -50,7 +54,15 @@ class JspPair {
     JspPair( int parent, std::string& k, int type ) {
         parentContainer = parent;
         key = k;
-        valueType = type; 
+        valueType = type;
+    }
+
+    JspPair( int parent, std::string& k, int type, int start, int end ) {
+        parentContainer = parent;
+        keyStart = start;
+        keyEnd = end;
+        key = k;
+        valueType = type;
     }
 
     // key->string
@@ -71,6 +83,16 @@ class JspPair {
         key = k;
         num_value = v;
         valueType = JspType::NUM; 
+    }
+
+    // key->bool
+    JspPair( int parent, std::string& k, bool value, int start, int end ) {
+        parentContainer = parent;
+        keyStart = start;
+        keyEnd = end;
+        key = k;
+        bool_value = value;
+        valueType = JspType::BOOL; 
     }
 
     // key->child container
@@ -134,7 +156,7 @@ class Jsp {
         bool _error;
 
         Jsp() { _error = false; };
-        Jsp( std::string fileName );
+        Jsp( std::string& fileName );
 
         int root() {
             return 0;
@@ -214,10 +236,25 @@ class Jsp {
                 return 0.0;
             if( pptr->valueType != JspType::NUM )
                 return 0.0;
-            if( *error != NULL )
-                error = 0;
+            if( error != NULL )
+                *error = 0;
             return pptr->num_value;            
         }
+
+        // Returns the bool value of a pair specified by handle (index)
+        bool getBool( int p, int *error ) {
+            if( error != NULL ) 
+                *error = 1;
+            JspPair *pptr = getPair( p );
+            if( pptr == NULL )
+                return false;
+            if( pptr->valueType != JspType::BOOL )
+                return false;
+            if( error != NULL )
+                *error = 0;
+            return pptr->bool_value;            
+        }
+
 
         // Returns the dict value a pair specified by handle (index)
         int getDict( int p ) {
@@ -230,7 +267,7 @@ class Jsp {
             return pptr->childContainer;            
         }
 
-        std::vector<std::string> *getStrArr( int p ) {
+        std::vector<std::string>* getStrArr( int p ) {
             JspPair *pptr = getPair( p );
             if( pptr == NULL )
                 return NULL;
@@ -240,7 +277,7 @@ class Jsp {
             return &pptr->str_values;            
         }
 
-        std::vector<double> *getNumArr( int p ) {
+        std::vector<double>* getNumArr( int p ) {
             JspPair *pptr = getPair( p );
             if( pptr == NULL )
                 return NULL;
@@ -248,7 +285,19 @@ class Jsp {
                 return NULL;
             }
             return &pptr->num_values;            
-        }
+        }   
+
+        #if __cplusplus > 199711L
+        double* getNumArrPtr( int p ) {
+            JspPair *pptr = getPair( p );
+            if( pptr == NULL )
+                return NULL;
+            if( pptr->valueType != JspType::NUMARR ) {
+                return NULL;
+            }
+            return pptr->num_values.data();            
+        }   
+        #endif
         
         // Returns a vector of handles
         std::vector<int> *getDictArr( int p ) {
@@ -265,8 +314,8 @@ class Jsp {
             return !_error;
         }
 
-        void to_list_str( std::string& );
-        void stringify( std::string& );
+        std::string to_list_str(void);
+        std::string stringify();
         void stringify_helper( std::string&, int );
 
 private:

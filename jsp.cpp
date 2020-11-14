@@ -1,6 +1,6 @@
 #include <string>
 #include <vector>
-#include <map>
+#include <stdexcept>
 #include <stack>
 #include "jsp.hpp"
 
@@ -46,13 +46,20 @@ int parseNum( std::string& json_str, int start, int end, double& dest ) {
 
     std::string s = json_str.substr( first, last - first + 1 );
     std::string::size_type sz;
-    dest = std::stod (s, &sz);
+    try {
+        dest = std::stod (s, &sz);
+    } catch(const std::invalid_argument& e) {
+        return -1;
+    } catch(const std::out_of_range& e) {
+        return -1;
+    }
     return last;
 }
 
 int readNumArray( std::string& json_str, int start, int end, std::vector<double>& dest ) {
     int endOfArrayPos = -1; 
     int start_pos = start;
+    bool looking_for_comma = false;
     while(true) { 
         bool error = false;
         int i = start_pos;        
@@ -61,10 +68,17 @@ int readNumArray( std::string& json_str, int start, int end, std::vector<double>
             if( isWhiteSpace(c)) {
                 continue;
             }
-            if( c == ',' ) {
+            if( c == ',' ) {  
+                if( !looking_for_comma ) {  
+                    return -1;
+                }
+                looking_for_comma = false;
                 continue;
             }
             if( c == ']' ) {
+                if( !looking_for_comma ) {
+                    return -1;
+                }
                 endOfArrayPos = i;
                 break;
             }
@@ -87,6 +101,7 @@ int readNumArray( std::string& json_str, int start, int end, std::vector<double>
         }
         dest.push_back(num);
         start_pos = lastDigitPos+1;
+        looking_for_comma = true;
     }
     return endOfArrayPos;
 }
@@ -143,7 +158,7 @@ int readStrArray( std::string& json_str, int start, int end, std::vector<std::st
 }
 
 
-int getTypeOfArray( std::string& json_str, int start, int end ) {
+int getTypeOfArray( std::string& json_str, int start, int end, int& right_square_bracket_pos_of_empty_arr ) {
     for( int i = start ; i <= end ; i++ ) {
         char c = json_str[i];
         if( c == '"' ) {
@@ -154,6 +169,10 @@ int getTypeOfArray( std::string& json_str, int start, int end ) {
         }
         if( c == '{' ) {
             return JspType::DICTARR;
+        }
+        if( c == ']' ) {    // An empty array
+            right_square_bracket_pos_of_empty_arr = i;
+            return JspType::EMPTYARR;
         }
         if( !isWhiteSpace( c ) ) {
             break;
@@ -183,7 +202,7 @@ int findRightBracket(std::string& json_str, int start, int end) {
 }
 
 
-int findBracketsInArray(std::string json_str, int start, int end, int& op, int& cl ) {
+int findBracketsInArray(std::string& json_str, int start, int end, int& op, int& cl ) {
     int i;
     op = -1;
     cl = -1;
@@ -284,7 +303,7 @@ int parseStr(std::string& json_str, int start, int end, std::string& dest ) {
 }
 
 
-Jsp::Jsp( std::string json_str ) {
+Jsp::Jsp( std::string& json_str ) {
     int i;
     std::stack<int> containers_stack;
 
@@ -342,6 +361,24 @@ Jsp::Jsp( std::string json_str ) {
                     _containers[parent_container].addPair( _pairs.size()-1 ); 
                     range_start = numEndPos+1;
                     break;
+                } 
+                else if( c == 'n' && json_str[i+1] == 'u' && json_str[i+2] == 'l' && json_str[i+3] == 'l' ) {   // A null
+                        _pairs.push_back( JspPair( parent_container, key, JspType::NULLVAL, range_start, i+3 ) ); 
+                        _containers[parent_container].addPair( _pairs.size()-1 ); 
+                        range_start = i+4;
+                        break;
+                }
+                else if( c == 't' && json_str[i+1] == 'r' && json_str[i+2] == 'u' && json_str[i+3] == 'e' ) {   // A true
+                        _pairs.push_back( JspPair( parent_container, key, true, range_start, i+3 ) ); 
+                        _containers[parent_container].addPair( _pairs.size()-1 ); 
+                        range_start = i+4;
+                        break;
+                }
+                else if( c == 'f' && json_str[i+1] == 'a' && json_str[i+2] == 'l' && json_str[i+3] == 's' && json_str[i+4] == 'e' ) {   // A false
+                        _pairs.push_back( JspPair( parent_container, key, false, range_start, i+4 ) ); 
+                        _containers[parent_container].addPair( _pairs.size()-1 ); 
+                        range_start = i+5;
+                        break;
                 }                 
                 else if( c == '{' ) {  // A new container
                     int pos = findRightBracket(json_str, i+1, range_end);
@@ -362,7 +399,16 @@ Jsp::Jsp( std::string json_str ) {
                     break;
                 }
                 else if( c == '[' ) {  // An array found
-                    int type = getTypeOfArray( json_str, i+1, range_end );
+                    int right_square_bracket_pos_of_empty_arr;
+                    int type = getTypeOfArray( json_str, i+1, range_end, right_square_bracket_pos_of_empty_arr );
+                    if( type == JspType::EMPTYARR ) {
+                        JspPair pair( parent_container, key, JspType::EMPTYARR );
+                        _pairs.push_back( pair );
+                        _containers[parent_container].addPair( _pairs.size()-1 ); 
+
+                        range_start = right_square_bracket_pos_of_empty_arr + 1;
+                        break;
+                    }
                     if( type == JspType::UNDEF ) {
                         _error = true;
                         break;
@@ -416,7 +462,10 @@ Jsp::Jsp( std::string json_str ) {
                         } 
                         break;
                     }
-                }                                                            
+                } else {
+                    _error = true;
+                    break;
+                }                                                           
             }
             if( _error )
                 break;
@@ -443,8 +492,8 @@ Jsp::Jsp( std::string json_str ) {
 }
 
 
-void Jsp::to_list_str( std::string& dest ) {
-    dest = "";
+std::string Jsp::to_list_str() {
+    std::string dest = "";
     std::stack<int> containers;
     std::stack<std::string> keys;
     containers.push(0);
@@ -473,17 +522,23 @@ void Jsp::to_list_str( std::string& dest ) {
             }            
             dest += p->key + " = "; 
             if( p->valueType == JspType::STR ) {
-                dest += p->str_value;
+                dest += '"' + p->str_value + '"';
             } 
             else if( p->valueType == JspType::NUM ) {
                 dest += std::to_string(p->num_value);
             } 
+            else if( p->valueType == JspType::BOOL ) {
+                dest += (p->bool_value) ? "true" : "false";
+            } 
+            else if( p->valueType == JspType::NULLVAL ) {
+                dest += "null";
+            } 
             else if( p->valueType == JspType::STRARR ) {
                 for( int k = 0 ; k < p->str_values.size() ; k++ ) {
                     if( k > 0 ) {
-                        dest += ",";
+                        dest += ", ";
                     }
-                    dest += p->str_values[k];
+                    dest += '"' + p->str_values[k] + '"';
                 }
             } 
             else if( p->valueType == JspType::NUMARR ) {
@@ -497,6 +552,7 @@ void Jsp::to_list_str( std::string& dest ) {
             dest += '\n';
         }
     }
+    return dest;
  }
 
 
@@ -508,10 +564,10 @@ void Jsp::stringify_helper( std::string& dest, int ci ) {
 
     for( int ip = 0 ; ip < c->childPairs.size() ; ip++ ) {
         if( ip > 0 ) {
-            dest += ',';
+            dest += ", ";
         }
         JspPair *p = &_pairs[ c->childPairs[ip] ];
-        dest += p->key + "="; 
+        dest += '"' + p->key + '"' + ": "; 
 
         if( p->valueType == JspType::DICT) {
             stringify_helper(dest, p->childContainer);
@@ -521,7 +577,7 @@ void Jsp::stringify_helper( std::string& dest, int ci ) {
             dest += '[';
             for( int cc = 0 ; cc < p->childContainers.size() ; cc++ ) {
                 if( cc > 0 ) {
-                    dest += ',';
+                    dest += ", ";
                 }
                 stringify_helper(dest, p->childContainers[cc]);
             }
@@ -534,13 +590,19 @@ void Jsp::stringify_helper( std::string& dest, int ci ) {
         else if( p->valueType == JspType::NUM ) {
             dest += std::to_string(p->num_value);
         } 
+        else if( p->valueType == JspType::BOOL ) {
+            dest += (p->bool_value) ? "true" : "false";
+        } 
+        else if( p->valueType == JspType::NULLVAL ) {
+            dest += "null";
+        } 
         else if( p->valueType == JspType::STRARR ) {
             dest += '[';
             for( int k = 0 ; k < p->str_values.size() ; k++ ) {
                 if( k > 0 ) {
-                    dest += ",";
+                    dest += ", ";
                 }
-                dest += p->str_values[k];
+                dest += '"' + p->str_values[k] + '"';
             }
             dest += ']';
         } 
@@ -554,11 +616,15 @@ void Jsp::stringify_helper( std::string& dest, int ci ) {
             }
             dest += ']';
         }
+        else if( p->valueType == JspType::EMPTYARR ) {
+            dest += "[]";
+        }
     }
     dest += '}';
 } 
 
-void Jsp::stringify( std::string& dest ) {
-    dest = "";
+std::string Jsp::stringify() {
+    std::string dest = "";
     stringify_helper(dest, 0);
+    return dest;
  }
